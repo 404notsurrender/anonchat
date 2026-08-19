@@ -20,13 +20,16 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 PORT = int(os.environ.get("PORT", 7860))
 
+# --- CONFIG ADMIN (Ganti dengan Telegram User ID kamu jika ingin akses khusus) ---
+# Kamu bisa cek ID Telegram kamu lewat bot @userinfobot
+ADMIN_IDS = [1076068580] # Contoh ID, nanti bisa kamu sesuaikan dengan ID Telegram asli kamu
+
 # --- DATABASE SETUP (SQLite) ---
 DB_FILE = "bot_database.db"
 
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    # Tabel User dengan tambahan kolom gender
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -38,7 +41,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-    logging.info("Database SQLite (bot_database.db) dengan kolom gender berhasil diinisialisasi!")
+    logging.info("Database SQLite dengan tabel users berhasil diinisialisasi!")
 
 init_db()
 
@@ -83,9 +86,17 @@ def check_user_premium(user_id):
         return True
     return False
 
+def get_all_user_ids():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    rows = cursor.fetchall()
+    conn.close()
+    return [row[0] for row in rows]
+
 # --- STATE APPS ---
-waiting_queue = [] # List berisi user_id yang sedang mencari partner
-active_chats = {}  # Mapping user_id <-> partner_id
+waiting_queue = []
+active_chats = {}
 
 # Keyboard Menu
 menu_idle = ReplyKeyboardMarkup([["🔍 Cari Partner", "💎 Cek Status VIP"]], resize_keyboard=True)
@@ -96,14 +107,13 @@ telegram_app = None
 
 @app.get("/")
 def home():
-    return {"status": "Bot Anonymous Chat with Gender & SQLite is alive!"}
+    return {"status": "Bot Anonymous Chat with Admin Broadcast is alive!"}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_data = get_or_create_user(user.id, user.username)
     gender = user_data[1]
 
-    # Jika belum set gender, tampilkan pilihan gender via Inline Keyboard
     if not gender:
         keyboard = [
             [
@@ -147,6 +157,46 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=menu_idle
     )
 
+# --- FITUR BROADCAST KHUSUS ADMIN ---
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # Validasi apakah pengirim adalah Admin
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Kamu tidak memiliki akses untuk menggunakan perintah ini.")
+        return
+
+    # Ambil teks setelah perintah /broadcast
+    message_text = " ".join(context.args)
+    if not message_text:
+        await update.message.reply_text(
+            "⚠️ Format broadcast salah!\n"
+            "Gunakan format: `/broadcast Pesan yang ingin dikirim...`",
+            parse_mode="Markdown"
+        )
+        return
+
+    user_ids = get_all_user_ids()
+    success_count = 0
+    fail_count = 0
+
+    await update.message.reply_text(f"📢 Memulai broadcast ke {len(user_ids)} pengguna...")
+
+    for uid in user_ids:
+        try:
+            await context.bot.send_message(chat_id=uid, text=f"📢 **PENGUMUMAN PENTING**\n\n{message_text}", parse_mode="Markdown")
+            success_count += 1
+        except Exception as e:
+            logging.error(f"Gagal kirim broadcast ke {uid}: {e}")
+            fail_count += 1
+
+    await update.message.reply_text(
+        f"✅ **Broadcast Selesai!**\n\n"
+        f"- Berhasil terkirim: {success_count}\n"
+        f"- Gagal (User memblokir bot): {fail_count}",
+        parse_mode="Markdown"
+    )
+
 async def status_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     conn = sqlite3.connect(DB_FILE)
@@ -166,7 +216,6 @@ async def status_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def search_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # Pastikan user sudah set gender
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute("SELECT gender FROM users WHERE user_id = ?", (user_id,))
@@ -188,10 +237,8 @@ async def search_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     is_vip = check_user_premium(user_id)
 
-    # Sistem Matching Lawan Jenis (Free User prioritaskan lawan jenis jika ada di queue)
     matched_partner_id = None
     for queued_id in waiting_queue:
-        # Cek gender user yang ada di antrean
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute("SELECT gender FROM users WHERE user_id = ?", (queued_id,))
@@ -202,7 +249,6 @@ async def search_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
             matched_partner_id = queued_id
             break
 
-    # Jika tidak ketemu lawan jenis atau antrean kosong, ambil antrean pertama (atau random)
     if not matched_partner_id and waiting_queue:
         matched_partner_id = waiting_queue[0]
 
@@ -326,6 +372,7 @@ async def startup_event():
     
     telegram_app = ApplicationBuilder().token(TOKEN).build()
     telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CommandHandler("broadcast", broadcast_command))
     telegram_app.add_handler(CallbackQueryHandler(gender_callback, pattern="^gender_"))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
@@ -335,7 +382,7 @@ async def startup_event():
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling()
-    logging.info("Telegram Bot started with Gender Selection & Smart Cross-Gender Matching!")
+    logging.info("Telegram Bot started with Admin Broadcast feature!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
