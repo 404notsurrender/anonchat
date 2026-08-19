@@ -29,7 +29,7 @@ telegram_app = None
 
 @app.get("/")
 def home():
-    return {"status": "Bot Anonymous Chat (Media Feature) is alive!"}
+    return {"status": "Bot Anonymous Chat (Media Fixed) is alive!"}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -124,7 +124,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Ketik 'Cari Partner' untuk mulai mencari teman ngobrol!", reply_markup=menu_idle)
 
-# Handler Universal untuk Media (Foto, Stiker, Voice Note, Video, Dokumen)
+# Handler Universal untuk Media (Foto, Stiker, Voice Note, Video, Dokumen) v20+ Syntax
 async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
@@ -135,13 +135,9 @@ async def handle_media(update: Update, context: ContextTypes.DEFAULT_TYPE):
     partner_id = active_chats[user_id]
     msg = update.message
 
-    # Forward media secara anonim ke partner
     try:
         if msg.photo:
-            # Ambil foto kualitas terbaik (paling belakang di list photo)
-            photo_file_id = msg.photo[-1].file_id
-            caption = msg.caption or ""
-            await context.bot.send_photo(chat_id=partner_id, photo=photo_file_id, caption=caption)
+            await context.bot.send_photo(chat_id=partner_id, photo=msg.photo[-1].file_id, caption=msg.caption or "")
         elif msg.sticker:
             await context.bot.send_sticker(chat_id=partner_id, sticker=msg.sticker.file_id)
         elif msg.voice:
@@ -167,18 +163,17 @@ async def startup_event():
     
     telegram_app = ApplicationBuilder().token(TOKEN).build()
     
-    # Daftarkan Handlers
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
-    # Handler untuk berbagai jenis media (Foto, Stiker, Voice Note, Video, Document, dll)
-    media_filter = filters.PHOTO | filters.STICKER | filters.VOICE | filters.VIDEO | filters.DOCUMENT | filters.AUDIO | filters.ANIMATION
+    # Gunakan filters.PHOTO, filters.Sticker, dll secara individual agar aman di v20+
+    media_filter = filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.VIDEO | filters.Document.ALL | filters.AUDIO | filters.ANIMATION
     telegram_app.add_handler(MessageHandler(media_filter, handle_media))
     
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling()
-    logging.info("Telegram Bot started with Anonymous Media Forwarding feature!")
+    logging.info("Telegram Bot started with Fixed Anonymous Media Forwarding feature!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
