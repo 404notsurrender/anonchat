@@ -40,7 +40,6 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-    logging.info("Database SQLite berhasil diinisialisasi!")
 
 init_db()
 
@@ -119,7 +118,7 @@ telegram_app = None
 
 @app.get("/")
 def home():
-    return {"status": "Bot Anonymous Chat with Fixed Commands is alive!"}
+    return {"status": "Bot Anonymous Chat is alive!"}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -169,7 +168,7 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=menu_idle
     )
 
-# --- FITUR ADMIN STATS (/stats) ---
+# --- FITUR ADMIN STATS (/stats) TANPA FORMAT MARKDOWN YANG RAWAN ERROR ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
@@ -180,12 +179,12 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_users, total_cowok, total_cewek, total_vip, recent_users = get_all_users_stats()
 
     stats_msg = (
-        f"📊 *STATISTIK BOT ANONYMOUS CHAT* 📊\n\n"
-        f"👥 Total Pengguna: *{total_users}* orang\n"
-        f"👨 Cowok: *{total_cowok}*\n"
-        f"👩 Cewek: *{total_cewek}*\n"
-        f"💎 Member VIP: *{total_vip}*\n\n"
-        f"🕒 *10 Pengguna Terbaru:*\n"
+        "📊 STATISTIK BOT ANONYMOUS CHAT 📊\n\n"
+        f"👥 Total Pengguna: {total_users} orang\n"
+        f"👨 Cowok: {total_cowok}\n"
+        f"👩 Cewek: {total_cewek}\n"
+        f"💎 Member VIP: {total_vip}\n\n"
+        "🕒 10 Pengguna Terbaru:\n"
     )
 
     for idx, (uname, gender, is_vip) in enumerate(recent_users, 1):
@@ -194,7 +193,8 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         vip_badge = "👑 VIP" if is_vip == 1 else "🌱 Free"
         stats_msg += f"{idx}. {username_str} | {gender_str} | {vip_badge}\n"
 
-    await update.message.reply_text(stats_msg, parse_mode="Markdown")
+    # Kirim pesan teks biasa tanpa parse_mode Markdown agar 100% aman anti gagal
+    await update.message.reply_text(stats_msg)
 
 # --- FITUR BROADCAST KHUSUS ADMIN ---
 async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -206,11 +206,7 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     message_text = " ".join(context.args)
     if not message_text:
-        await update.message.reply_text(
-            "⚠️ Format broadcast salah!\n"
-            "Gunakan format: `/broadcast Pesan yang ingin dikirim...`",
-            parse_mode="Markdown"
-        )
+        await update.message.reply_text("⚠️ Format broadcast salah!\nGunakan format: /broadcast Pesan...")
         return
 
     conn = sqlite3.connect(DB_FILE)
@@ -226,17 +222,16 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for uid in user_ids:
         try:
-            await context.bot.send_message(chat_id=uid, text=f"📢 *PENGUMUMAN PENTING*\n\n{message_text}", parse_mode="Markdown")
+            await context.bot.send_message(chat_id=uid, text=f"📢 PENGUMUMAN PENTING\n\n{message_text}")
             success_count += 1
         except Exception as e:
             logging.error(f"Gagal kirim broadcast ke {uid}: {e}")
             fail_count += 1
 
     await update.message.reply_text(
-        f"✅ *Broadcast Selesai!*\n\n"
+        "✅ Broadcast Selesai!\n\n"
         f"- Berhasil terkirim: {success_count}\n"
-        f"- Gagal (User memblokir bot): {fail_count}",
-        parse_mode="Markdown"
+        f"- Gagal: {fail_count}"
     )
 
 async def status_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -248,11 +243,11 @@ async def status_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if row and row[0] == 1:
-        await update.message.reply_text(f"💎 Status Kamu: **VIP MEMBER**\n⏳ Berakhir pada: {row[1]}", parse_mode="Markdown")
+        await update.message.reply_text(f"💎 Status Kamu: VIP MEMBER\n⏳ Berakhir pada: {row[1]}")
     else:
         await update.message.reply_text(
-            "🌱 Status Kamu: **Free User**\n\n"
-            "Nikmati fitur prioritas antrean, bebas pilih filter gender, dan keuntungan eksklusif lainnya dengan upgrade ke VIP! 🚀"
+            "🌱 Status Kamu: Free User\n\n"
+            "Nikmati fitur prioritas antrean dan keuntungan eksklusif lainnya dengan upgrade ke VIP! 🚀"
         )
 
 async def search_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -414,7 +409,7 @@ async def startup_event():
     
     telegram_app = ApplicationBuilder().token(TOKEN).build()
     
-    # Daftarkan Command Handlers terlebih dahulu agar tidak tertutup MessageHandler teks biasa
+    # Daftarkan Command Handlers secara eksplisit
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("broadcast", broadcast_command))
     telegram_app.add_handler(CommandHandler("stats", stats_command))
@@ -428,7 +423,7 @@ async def startup_event():
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling()
-    logging.info("Telegram Bot started with cleanly ordered Command Handlers!")
+    logging.info("Telegram Bot started with clean plain-text command outputs!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
