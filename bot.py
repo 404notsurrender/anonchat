@@ -119,7 +119,7 @@ telegram_app = None
 
 @app.get("/")
 def home():
-    return {"status": "Bot Anonymous Chat with Admin Stats is alive!"}
+    return {"status": "Bot Anonymous Chat with Fixed Commands is alive!"}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -180,12 +180,12 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_users, total_cowok, total_cewek, total_vip, recent_users = get_all_users_stats()
 
     stats_msg = (
-        f"📊 **STATISTIK BOT ANONYMOUS CHAT** 📊\n\n"
-        f"👥 Total Pengguna: **{total_users}** orang\n"
-        f"👨 Cowok: **{total_cowok}**\n"
-        f"👩 Cewek: **{total_cewek}**\n"
-        f"💎 Member VIP: **{total_vip}**\n\n"
-        f"🕒 **10 Pengguna Terbaru:**\n"
+        f"📊 *STATISTIK BOT ANONYMOUS CHAT* 📊\n\n"
+        f"👥 Total Pengguna: *{total_users}* orang\n"
+        f"👨 Cowok: *{total_cowok}*\n"
+        f"👩 Cewek: *{total_cewek}*\n"
+        f"💎 Member VIP: *{total_vip}*\n\n"
+        f"🕒 *10 Pengguna Terbaru:*\n"
     )
 
     for idx, (uname, gender, is_vip) in enumerate(recent_users, 1):
@@ -226,14 +226,14 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for uid in user_ids:
         try:
-            await context.bot.send_message(chat_id=uid, text=f"📢 **PENGUMUMAN PENTING**\n\n{message_text}", parse_mode="Markdown")
+            await context.bot.send_message(chat_id=uid, text=f"📢 *PENGUMUMAN PENTING*\n\n{message_text}", parse_mode="Markdown")
             success_count += 1
         except Exception as e:
             logging.error(f"Gagal kirim broadcast ke {uid}: {e}")
             fail_count += 1
 
     await update.message.reply_text(
-        f"✅ **Broadcast Selesai!**\n\n"
+        f"✅ *Broadcast Selesai!*\n\n"
         f"- Berhasil terkirim: {success_count}\n"
         f"- Gagal (User memblokir bot): {fail_count}",
         parse_mode="Markdown"
@@ -413,9 +413,12 @@ async def startup_event():
         return
     
     telegram_app = ApplicationBuilder().token(TOKEN).build()
+    
+    # Daftarkan Command Handlers terlebih dahulu agar tidak tertutup MessageHandler teks biasa
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("broadcast", broadcast_command))
     telegram_app.add_handler(CommandHandler("stats", stats_command))
+    
     telegram_app.add_handler(CallbackQueryHandler(gender_callback, pattern="^gender_"))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
@@ -425,7 +428,7 @@ async def startup_event():
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling()
-    logging.info("Telegram Bot started with Admin Stats & Broadcast features!")
+    logging.info("Telegram Bot started with cleanly ordered Command Handlers!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
