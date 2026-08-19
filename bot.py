@@ -20,9 +20,8 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=lo
 TOKEN = os.environ.get("TELEGRAM_TOKEN")
 PORT = int(os.environ.get("PORT", 7860))
 
-# --- CONFIG ADMIN (Ganti dengan Telegram User ID kamu jika ingin akses khusus) ---
-# Kamu bisa cek ID Telegram kamu lewat bot @userinfobot
-ADMIN_IDS = [1076068580] # Contoh ID, nanti bisa kamu sesuaikan dengan ID Telegram asli kamu
+# --- CONFIG ADMIN ---
+ADMIN_IDS = [1076068580]
 
 # --- DATABASE SETUP (SQLite) ---
 DB_FILE = "bot_database.db"
@@ -41,7 +40,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
-    logging.info("Database SQLite dengan tabel users berhasil diinisialisasi!")
+    logging.info("Database SQLite berhasil diinisialisasi!")
 
 init_db()
 
@@ -86,13 +85,26 @@ def check_user_premium(user_id):
         return True
     return False
 
-def get_all_user_ids():
+def get_all_users_stats():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users")
-    rows = cursor.fetchall()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM users WHERE gender = 'cowok'")
+    total_cowok = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM users WHERE gender = 'cewek'")
+    total_cewek = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = 1")
+    total_vip = cursor.fetchone()[0]
+
+    cursor.execute("SELECT username, gender, is_premium FROM users ORDER BY user_id DESC LIMIT 10")
+    recent_users = cursor.fetchall()
+    
     conn.close()
-    return [row[0] for row in rows]
+    return total_users, total_cowok, total_cewek, total_vip, recent_users
 
 # --- STATE APPS ---
 waiting_queue = []
@@ -107,7 +119,7 @@ telegram_app = None
 
 @app.get("/")
 def home():
-    return {"status": "Bot Anonymous Chat with Admin Broadcast is alive!"}
+    return {"status": "Bot Anonymous Chat with Admin Stats is alive!"}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -157,16 +169,41 @@ async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=menu_idle
     )
 
-# --- FITUR BROADCAST KHUSUS ADMIN ---
-async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- FITUR ADMIN STATS (/stats) ---
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # Validasi apakah pengirim adalah Admin
     if user_id not in ADMIN_IDS:
         await update.message.reply_text("⛔ Kamu tidak memiliki akses untuk menggunakan perintah ini.")
         return
 
-    # Ambil teks setelah perintah /broadcast
+    total_users, total_cowok, total_cewek, total_vip, recent_users = get_all_users_stats()
+
+    stats_msg = (
+        f"📊 **STATISTIK BOT ANONYMOUS CHAT** 📊\n\n"
+        f"👥 Total Pengguna: **{total_users}** orang\n"
+        f"👨 Cowok: **{total_cowok}**\n"
+        f"👩 Cewek: **{total_cewek}**\n"
+        f"💎 Member VIP: **{total_vip}**\n\n"
+        f"🕒 **10 Pengguna Terbaru:**\n"
+    )
+
+    for idx, (uname, gender, is_vip) in enumerate(recent_users, 1):
+        username_str = f"@{uname}" if uname else "-"
+        gender_str = gender.capitalize() if gender else "Belum set"
+        vip_badge = "👑 VIP" if is_vip == 1 else "🌱 Free"
+        stats_msg += f"{idx}. {username_str} | {gender_str} | {vip_badge}\n"
+
+    await update.message.reply_text(stats_msg, parse_mode="Markdown")
+
+# --- FITUR BROADCAST KHUSUS ADMIN ---
+async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("⛔ Kamu tidak memiliki akses untuk menggunakan perintah ini.")
+        return
+
     message_text = " ".join(context.args)
     if not message_text:
         await update.message.reply_text(
@@ -176,7 +213,12 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    user_ids = get_all_user_ids()
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT user_id FROM users")
+    user_ids = [row[0] for row in cursor.fetchall()]
+    conn.close()
+
     success_count = 0
     fail_count = 0
 
@@ -373,6 +415,7 @@ async def startup_event():
     telegram_app = ApplicationBuilder().token(TOKEN).build()
     telegram_app.add_handler(CommandHandler("start", start))
     telegram_app.add_handler(CommandHandler("broadcast", broadcast_command))
+    telegram_app.add_handler(CommandHandler("stats", stats_command))
     telegram_app.add_handler(CallbackQueryHandler(gender_callback, pattern="^gender_"))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
@@ -382,7 +425,7 @@ async def startup_event():
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling()
-    logging.info("Telegram Bot started with Admin Broadcast feature!")
+    logging.info("Telegram Bot started with Admin Stats & Broadcast features!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
