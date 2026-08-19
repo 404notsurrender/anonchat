@@ -1,12 +1,13 @@
 import os
 import logging
 import sqlite3
-from datetime import datetime, timedelta
-from telegram import Update, ReplyKeyboardMarkup
+from datetime import datetime
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -25,34 +26,42 @@ DB_FILE = "bot_database.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    # Tabel User dengan kolom status Premium & Expired
+    # Tabel User dengan tambahan kolom gender
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
             username TEXT,
+            gender TEXT DEFAULT NULL,
             is_premium INTEGER DEFAULT 0,
             premium_expired TEXT
         )
     """)
     conn.commit()
     conn.close()
-    logging.info("Database SQLite (bot_database.db) berhasil diinisialisasi!")
+    logging.info("Database SQLite (bot_database.db) dengan kolom gender berhasil diinisialisasi!")
 
 init_db()
 
 def get_or_create_user(user_id, username):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
-    cursor.execute("SELECT user_id, is_premium, premium_expired FROM users WHERE user_id = ?", (user_id,))
+    cursor.execute("SELECT user_id, gender, is_premium, premium_expired FROM users WHERE user_id = ?", (user_id,))
     row = cursor.fetchone()
     
     if not row:
-        cursor.execute("INSERT INTO users (user_id, username, is_premium) VALUES (?, ?, 0)", (user_id, username))
+        cursor.execute("INSERT INTO users (user_id, username, gender, is_premium) VALUES (?, ?, NULL, 0)", (user_id, username))
         conn.commit()
-        row = (user_id, 0, None)
+        row = (user_id, None, 0, None)
     
     conn.close()
     return row
+
+def update_user_gender(user_id, gender):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET gender = ? WHERE user_id = ?", (gender, user_id))
+    conn.commit()
+    conn.close()
 
 def check_user_premium(user_id):
     conn = sqlite3.connect(DB_FILE)
@@ -62,11 +71,9 @@ def check_user_premium(user_id):
     conn.close()
     
     if row and row[0] == 1:
-        # Cek apakah masa berlaku premium sudah habis
         if row[1]:
             expired_date = datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S")
             if datetime.now() > expired_date:
-                # Expired -> Downgrade jadi non-premium
                 conn = sqlite3.connect(DB_FILE)
                 c = conn.cursor()
                 c.execute("UPDATE users SET is_premium = 0, premium_expired = NULL WHERE user_id = ?", (user_id,))
@@ -77,8 +84,8 @@ def check_user_premium(user_id):
     return False
 
 # --- STATE APPS ---
-waiting_queue = [] # Bisa dikembangkan jadi Priority Queue nanti untuk VIP
-active_chats = {}
+waiting_queue = [] # List berisi user_id yang sedang mencari partner
+active_chats = {}  # Mapping user_id <-> partner_id
 
 # Keyboard Menu
 menu_idle = ReplyKeyboardMarkup([["🔍 Cari Partner", "💎 Cek Status VIP"]], resize_keyboard=True)
@@ -89,18 +96,54 @@ telegram_app = None
 
 @app.get("/")
 def home():
-    return {"status": "Bot Anonymous Chat with SQLite & VIP is alive!"}
+    return {"status": "Bot Anonymous Chat with Gender & SQLite is alive!"}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    get_or_create_user(user.id, user.username)
-    
+    user_data = get_or_create_user(user.id, user.username)
+    gender = user_data[1]
+
+    # Jika belum set gender, tampilkan pilihan gender via Inline Keyboard
+    if not gender:
+        keyboard = [
+            [
+                InlineKeyboardButton("👨 Cowok", callback_data="gender_cowok"),
+                InlineKeyboardButton("👩 Cewek", callback_data="gender_cewek")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.message.reply_text(
+            f"Halo, {user.first_name}! Selamat datang di Bot Anonymous Chat.\n\n"
+            "Sebelum mulai, pilih jenis kelamin kamu terlebih dahulu ya:",
+            reply_markup=reply_markup
+        )
+        return
+
     is_vip = check_user_premium(user.id)
     badge = "👑 [VIP Member]" if is_vip else "🌱 [Free User]"
     
     await update.message.reply_text(
-        f"Halo, {user.first_name}! {badge}\nSelamat datang di Bot Anonymous Chat.\n\n"
+        f"Halo, {user.first_name}! {badge}\nJenis Kelamin: **{gender.capitalize()}**\n\n"
         "Tekan tombol di bawah untuk mulai mencari teman ngobrol secara anonim.",
+        reply_markup=menu_idle
+    )
+
+async def gender_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    selected_gender = "cowok" if query.data == "gender_cowok" else "cewek"
+    
+    update_user_gender(user_id, selected_gender)
+    
+    await query.edit_message_text(
+        text=f"✅ Berhasil! Jenis kelamin kamu diset sebagai: **{selected_gender.capitalize()}**.\n\n"
+             "Sekarang ketik /start atau gunakan tombol di bawah untuk mulai mencari partner!"
+    )
+    await context.bot.send_message(
+        chat_id=user_id,
+        text="Silakan tekan tombol di bawah untuk mulai:",
         reply_markup=menu_idle
     )
 
@@ -117,11 +160,25 @@ async def status_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(
             "🌱 Status Kamu: **Free User**\n\n"
-            "Nikmati fitur prioritas antrean dan keuntungan eksklusif lainnya dengan upgrade ke VIP! (Integrasi QRIS Pakasir segera hadir 🚀)"
+            "Nikmati fitur prioritas antrean, bebas pilih filter gender, dan keuntungan eksklusif lainnya dengan upgrade ke VIP! 🚀"
         )
 
 async def search_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    
+    # Pastikan user sudah set gender
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT gender FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    
+    if not row or not row[0]:
+        await update.message.reply_text("⚠️ Silakan kirim /start terlebih dahulu untuk memilih jenis kelamin kamu.")
+        return
+
+    my_gender = row[0]
+
     if user_id in active_chats:
         await update.message.reply_text("Kamu sedang mengobrol dengan seseorang!", reply_markup=menu_chat)
         return
@@ -129,24 +186,41 @@ async def search_partner(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Kamu sudah berada di antrean. Mohon tunggu...", reply_markup=menu_idle)
         return
 
-    # Cek VIP untuk prioritas antrean (Bisa ditaruh di depan queue jika VIP)
     is_vip = check_user_premium(user_id)
 
-    if waiting_queue:
-        partner_id = waiting_queue.pop(0)
+    # Sistem Matching Lawan Jenis (Free User prioritaskan lawan jenis jika ada di queue)
+    matched_partner_id = None
+    for queued_id in waiting_queue:
+        # Cek gender user yang ada di antrean
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT gender FROM users WHERE user_id = ?", (queued_id,))
+        q_row = c.fetchone()
+        conn.close()
+
+        if q_row and q_row[0] != my_gender:
+            matched_partner_id = queued_id
+            break
+
+    # Jika tidak ketemu lawan jenis atau antrean kosong, ambil antrean pertama (atau random)
+    if not matched_partner_id and waiting_queue:
+        matched_partner_id = waiting_queue[0]
+
+    if matched_partner_id:
+        waiting_queue.remove(matched_partner_id)
         
-        active_chats[user_id] = partner_id
-        active_chats[partner_id] = user_id
+        active_chats[user_id] = matched_partner_id
+        active_chats[matched_partner_id] = user_id
 
         await context.bot.send_message(chat_id=user_id, text="🎉 Partner ditemukan! Silakan mulai mengobrol.", reply_markup=menu_chat)
-        await context.bot.send_message(chat_id=partner_id, text="🎉 Partner ditemukan! Silakan mulai mengobrol.", reply_markup=menu_chat)
+        await context.bot.send_message(chat_id=matched_partner_id, text="🎉 Partner ditemukan! Silakan mulai mengobrol.", reply_markup=menu_chat)
     else:
         if is_vip:
-            waiting_queue.insert(0, user_id) # VIP ditaruh di urutan paling depan!
-            await update.message.reply_text("👑 [VIP Priority] Mencari partner dengan prioritas tinggi...", reply_markup=menu_idle)
+            waiting_queue.insert(0, user_id)
+            await update.message.reply_text("👑 [VIP Priority] Mencari partner...", reply_markup=menu_idle)
         else:
             waiting_queue.append(user_id)
-            await update.message.reply_text("🔍 Sedang mencari partner... Mohon tunggu.", reply_markup=menu_idle)
+            await update.message.reply_text("🔍 Sedang mencari partner (diutamakan lawan jenis)... Mohon tunggu.", reply_markup=menu_idle)
 
 async def stop_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -252,6 +326,7 @@ async def startup_event():
     
     telegram_app = ApplicationBuilder().token(TOKEN).build()
     telegram_app.add_handler(CommandHandler("start", start))
+    telegram_app.add_handler(CallbackQueryHandler(gender_callback, pattern="^gender_"))
     telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     
     media_filter = filters.PHOTO | filters.Sticker.ALL | filters.VOICE | filters.VIDEO | filters.Document.ALL | filters.AUDIO | filters.ANIMATION
@@ -260,7 +335,7 @@ async def startup_event():
     await telegram_app.initialize()
     await telegram_app.start()
     await telegram_app.updater.start_polling()
-    logging.info("Telegram Bot started with SQLite & VIP Priority Queue!")
+    logging.info("Telegram Bot started with Gender Selection & Smart Cross-Gender Matching!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
